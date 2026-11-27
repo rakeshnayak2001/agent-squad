@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Fake Antigravity CLI. Mode from env AGY_FAKE_MODE: ok|quota|auth|error. `agy models` lists models."""
+import json, os, sys
+args = sys.argv[1:]
+mode = os.environ.get("AGY_FAKE_MODE", "ok")
+if args[:1] == ["models"]:
+    print("gemini-3.1-pro-high\ngemini-3.7-flash"); sys.exit(0)
+if "-p" not in args:
+    print("interactive session"); sys.exit(0)
+prompt = args[args.index("-p") + 1]
+if "prompt.txt" in prompt and os.path.exists("prompt.txt"):
+    prompt = "FILE:" + open("prompt.txt", encoding="utf-8").read()[:20]
+model = args[args.index("--model") + 1] if "--model" in args else "default"
+if mode == "quota":
+    print(json.dumps({"status": "ERROR", "error": {"message": "429 RESOURCE_EXHAUSTED: You have reached your usage limit"}})); sys.exit(1)
+if mode == "auth":
+    print("authentication required", file=sys.stderr); sys.exit(1)
+if mode == "error":
+    print(json.dumps({"status": "ERROR", "error": {"message": "something broke"}})); sys.exit(1)
+print(json.dumps({"conversation_id": "c1", "status": "SUCCESS", "response": f"agy[{model}]: {prompt[:40]}",
+                  "usage": {"input_tokens": 8, "output_tokens": 4, "thinking_tokens": 3, "total_tokens": 15}}))

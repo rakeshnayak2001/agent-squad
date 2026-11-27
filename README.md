@@ -28,7 +28,8 @@ squad status                          # which workers are ready, Gemini accounts
 squad test gemini "Say hi in five words"
 squad ask local --json < prompt.txt
 squad gemini set-key acc1             # save an AI Studio API key for that slot (hidden input)
-squad gemini models                   # models your key can use
+squad gemini models                   # models your key (or agy) can use
+squad gemini use agy|api              # Pro plan via Antigravity CLI, or API keys
 squad accounts [--reset]              # cooldowns after quota hits
 squad usage                           # calls / tokens by worker and account
 squad mcp                             # MCP server for Claude Code
@@ -47,6 +48,17 @@ claude mcp add workers -- python -m agent_squad mcp
 ```
 Tools: `list_workers`, `worker_generate`, `worker_generate_to_file`, `worker_batch`, each with
 `worker="local" | "gemini" | "<worker>:<model>"`. Files are limited to `SQUAD_PROJECT_ROOT` (default: current folder).
+
+## Gemini on your Google AI Pro plan (Antigravity CLI)
+Gemini CLI no longer accepts Pro sign-ins, but Google's **Antigravity CLI (`agy`)** does. Run **`setup_pro.bat`**: it
+installs `agy`, sets `workers.gemini.backend` to `"agy"` (`squad gemini use agy`), and opens the sign-in for your Pro
+account. Then every Gemini call runs `agy -p <prompt> --output-format json` in an empty temp folder.
+- One Pro account at a time (agy keeps its sign-in in the Windows credential store). Pick a model with
+  `agy_model` (list: `squad gemini models`; empty = agy's default).
+- Quota: the Pro plan's own limits (they refresh every few hours). On a quota error the slot cools down
+  (`agy_cooldown_minutes`, default 60) and the router's fallback list takes over, e.g. the local model.
+- Terms: Google has not clearly said whether scripted use of agy on a consumer plan is allowed (forum answers
+  disagree). Keep it personal and low-volume; switch back with `squad gemini use api` if needed.
 
 ## Gemini keys and rotation
 - **Backend `api` (default):** direct calls to the Gemini API with Google AI Studio keys. Each slot (`acc1`, `acc2`) has its

@@ -6,7 +6,8 @@
     squad ask <spec> [--json] < prompt.txt
     squad gemini set-key <account>      save an AI Studio API key for that slot (hidden input)
     squad gemini models [account]       models your key can use
-    squad gemini login <account>        same as set-key (api backend) / CLI sign-in (cli backend)
+    squad gemini login [account]        set-key (api backend) / sign-in (agy: Pro account, slot "pro")
+    squad gemini use agy|api|cli        switch the Gemini backend in squad.json
     squad accounts [--reset [name]]     Gemini account cooldowns
     squad usage                         last 30 days by worker
     squad mcp                           run the MCP server (for Claude Code)
@@ -35,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     t = sub.add_parser("test"); t.add_argument("spec"); t.add_argument("prompt", nargs="+")
     a = sub.add_parser("ask"); a.add_argument("spec"); a.add_argument("--json", action="store_true")
     a.add_argument("--system", default=""); a.add_argument("--no-fallback", action="store_true")
-    g = sub.add_parser("gemini"); g.add_argument("action", choices=["login", "set-key", "models"])
+    g = sub.add_parser("gemini"); g.add_argument("action", choices=["login", "set-key", "models", "use"])
     g.add_argument("account", nargs="?")
     ac = sub.add_parser("accounts"); ac.add_argument("--reset", nargs="?", const="*", default=None)
     sub.add_parser("usage")
@@ -67,8 +68,20 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"FAILED: {e}", file=sys.stderr)
                 return 1
             return 0
+        if args.action == "use":
+            if args.account not in ("agy", "api", "cli"):
+                p.error("usage: squad gemini use agy|api|cli")
+            path = write_default_config()
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data.setdefault("workers", {}).setdefault("gemini", {})["backend"] = args.account
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            print(f"Gemini backend set to {args.account} in {path}")
+            return 0
         if not args.account:
-            p.error("gemini login/set-key needs an account name, e.g. acc1")
+            if w.backend == "agy":
+                args.account = w.cfg["accounts"][0]["name"]
+            else:
+                p.error("gemini login/set-key needs an account name, e.g. acc1")
         return w.prompt_key(args.account) if args.action == "set-key" else w.login(args.account)
     elif args.cmd == "accounts":
         w = get_worker("gemini", cfg)
