@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Fake Gemini CLI for tests. Behaviour per account: file <GEMINI_CLI_HOME>/mode = ok|quota|daily|auth|crash."""
+import json, os, sys
+home = os.environ.get("GEMINI_CLI_HOME", "")
+mode = open(os.path.join(home, "mode")).read().strip() if os.path.exists(os.path.join(home, "mode")) else "ok"
+args = sys.argv[1:]
+prompt = args[args.index("-p") + 1] if "-p" in args else ""
+if not sys.stdin.isatty():
+    data = sys.stdin.read()
+    if data:
+        prompt = data
+model = args[args.index("-m") + 1] if "-m" in args else "gemini-default"
+acct = os.path.basename(home)
+if mode == "quota":
+    print(json.dumps({"error": {"type": "ApiError", "message": "429 RESOURCE_EXHAUSTED rate limit", "code": 429}}))
+    sys.exit(1)
+if mode == "daily":
+    print("You have exhausted your daily quota for today.", file=sys.stderr); sys.exit(1)
+if mode == "auth":
+    print("Please set an Auth method or sign in with Google.", file=sys.stderr); sys.exit(41)
+if mode == "crash":
+    print("boom", file=sys.stderr); sys.exit(1)
+print("Loaded cached credentials.")
+print(json.dumps({"response": f"echo[{acct}]: {prompt[:60]}", "stats": {"models": {model: {"tokens": {"prompt": 11, "candidates": 7, "thoughts": 2}}}}}))
