@@ -276,6 +276,21 @@ class GeminiCliWorker(Worker):
             code = subprocess.call([exe], env=self.account_env(acc))
             self.pool.reset(name)
             self.pool._update(name, needs_login=False)
+            print("Checking the sign-in with a short test call...")
+            try:
+                r = self.call_account(acc, "Reply with just the word OK.", self.cfg["model"])
+                self.pool.mark_ok(name)
+                print(f"Signed in and working ({r.text[:40]!r}). You can close this window.")
+            except WorkerError as e:
+                if isinstance(e, AuthError):
+                    self.pool.mark_auth(name, str(e))
+                print(f"The test call failed: {str(e)[:300]}")
+            except subprocess.TimeoutExpired:
+                print("The test call timed out.")
+            try:
+                input("Press Enter to close.")
+            except EOFError:
+                pass
             return code
         print(f"Opening {self.cfg['command']} for account '{name}' (home: {self.pool.home(acc)}).\n"
               "Choose 'Sign in with Google', use the Google AI Pro account for this slot, then type /quit.")
