@@ -16,9 +16,9 @@ DEFAULT_CONFIG = {
     "workers": {
         "claude": {"model": "", "allow_web_search": True, "timeout": 900},
         "local": {"url": "http://localhost:11434", "model": "qwen3:8b", "temperature": 0.3, "timeout": 600},
-        "gemini": {"command": "gemini", "model": "gemini-3-pro-preview", "rotation": "failover",
-                   "accounts": [{"name": "acc1", "label": "Pro account 1"},
-                                {"name": "acc2", "label": "Pro account 2"}],
+        "gemini": {"backend": "api", "command": "gemini", "model": "gemini-3-pro-preview", "rotation": "failover",
+                   "accounts": [{"name": "acc1", "label": "Gemini key 1"},
+                                {"name": "acc2", "label": "Gemini key 2"}],
                    "accounts_dir": str(HOME / "gemini")},
     },
     "default_worker": "local",

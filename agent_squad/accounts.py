@@ -104,7 +104,7 @@ class AccountPool:
             rec = st.get(a["name"], {})
             cool = self.cooling_until(a["name"])
             out.append({"name": a["name"], "label": a.get("label", a["name"]), "home": str(self.home(a)),
-                        "mode": "api_key" if a.get("api_key_env") else "google_login",
+                        "mode": "api_key_env" if a.get("api_key_env") else "default",
                         "signed_in": signed_in(a) if signed_in else None, "disabled": bool(a.get("disabled")),
                         "cooldown_until": _iso(cool) if cool else None, "calls_today": rec.get("calls", {}).get(today, 0),
                         "last_used": rec.get("last_used"), "last_error": rec.get("last_error"),
