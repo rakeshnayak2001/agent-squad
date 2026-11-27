@@ -4,7 +4,9 @@
     squad status                        which workers are ready, Gemini accounts
     squad test <spec> "prompt"          e.g. squad test gemini "Say hi in five words"
     squad ask <spec> [--json] < prompt.txt
-    squad gemini login <account>        one-time Google sign-in for that account
+    squad gemini set-key <account>      save an AI Studio API key for that slot (hidden input)
+    squad gemini models [account]       models your key can use
+    squad gemini login <account>        same as set-key (api backend) / CLI sign-in (cli backend)
     squad accounts [--reset [name]]     Gemini account cooldowns
     squad usage                         last 30 days by worker
     squad mcp                           run the MCP server (for Claude Code)
@@ -33,7 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     t = sub.add_parser("test"); t.add_argument("spec"); t.add_argument("prompt", nargs="+")
     a = sub.add_parser("ask"); a.add_argument("spec"); a.add_argument("--json", action="store_true")
     a.add_argument("--system", default=""); a.add_argument("--no-fallback", action="store_true")
-    g = sub.add_parser("gemini"); g.add_argument("action", choices=["login"]); g.add_argument("account")
+    g = sub.add_parser("gemini"); g.add_argument("action", choices=["login", "set-key", "models"])
+    g.add_argument("account", nargs="?")
     ac = sub.add_parser("accounts"); ac.add_argument("--reset", nargs="?", const="*", default=None)
     sub.add_parser("usage")
     sub.add_parser("mcp")
@@ -56,7 +59,17 @@ def main(argv: list[str] | None = None) -> int:
         print(r.text)
         print(json.dumps(r.to_dict() | {"text": None}), file=sys.stderr)
     elif args.cmd == "gemini":
-        return get_worker("gemini", cfg).login(args.account)
+        w = get_worker("gemini", cfg)
+        if args.action == "models":
+            try:
+                print("\n".join(w.models(args.account)))
+            except WorkerError as e:
+                print(f"FAILED: {e}", file=sys.stderr)
+                return 1
+            return 0
+        if not args.account:
+            p.error("gemini login/set-key needs an account name, e.g. acc1")
+        return w.prompt_key(args.account) if args.action == "set-key" else w.login(args.account)
     elif args.cmd == "accounts":
         w = get_worker("gemini", cfg)
         if args.reset:

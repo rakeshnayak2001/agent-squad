@@ -1,17 +1,18 @@
-"""Gemini through the Gemini CLI, signed in with Google AI Pro accounts (or API keys), with account rotation.
+"""Gemini worker with account rotation. Two backends:
 
-Each account gets its own CLI home folder (env var GEMINI_CLI_HOME by default), so the two Google
-sign-ins live side by side. Sign in once per account with `squad gemini login <account>`.
-
-Headless call per prompt:  gemini -p <prompt> --output-format json [-m <model>]
-run in an empty temporary folder, so the CLI's file tools cannot touch your projects.
+  backend "api" (default): the Gemini API with Google AI Studio keys, one key per account.
+      Save a key with `squad gemini set-key <account>` (stored in <accounts_dir>/<account>/api_key),
+      or point the account at an env var with "api_key_env": "MY_KEY_VAR".
+  backend "cli": a Gemini-CLI-compatible command run headless (gemini -p <prompt> --output-format json).
+      Note: since late 2026 Gemini CLI refuses Google AI Pro sign-ins ("migrate to Antigravity"),
+      so this backend only works with API keys or older setups.
 
 Settings (squad.json -> workers.gemini):
-  command        "gemini" (configurable in case your plan moves to another CLI)
+  backend        "api" | "cli"
+  command        "gemini" (cli backend)
   model          "gemini-3-pro-preview"
   rotation       "failover" | "round_robin"
-  accounts       [{"name": "acc1", "label": "Pro account 1"}, {"name": "acc2"}]
-                 an account with "api_key_env": "MY_KEY_VAR" uses that API key instead of a Google sign-in
+  accounts       [{"name": "acc1", "label": "Key 1"}, {"name": "acc2"}]
   accounts_dir   "~/.agent-squad/gemini"
   home_env       "GEMINI_CLI_HOME"
   extra_args     []            passed to every call
@@ -32,11 +33,12 @@ import time
 from pathlib import Path
 
 from ..accounts import AccountPool
+from . import gemini_api
 from .base import AuthError, QuotaError, Result, Worker, WorkerError
 
 DEFAULTS = {
-    "command": "gemini", "model": "gemini-3-pro-preview", "rotation": "failover",
-    "accounts": [{"name": "acc1", "label": "Pro account 1"}, {"name": "acc2", "label": "Pro account 2"}],
+    "backend": "api", "command": "gemini", "model": "gemini-3-pro-preview", "rotation": "failover",
+    "accounts": [{"name": "acc1", "label": "Gemini key 1"}, {"name": "acc2", "label": "Gemini key 2"}],
     "accounts_dir": "~/.agent-squad/gemini", "home_env": "GEMINI_CLI_HOME", "extra_args": [],
     "timeout": 600, "rate_limit_cooldown_minutes": 30, "quota_reset_utc_hour": 8,
 }
@@ -76,9 +78,39 @@ class GeminiCliWorker(Worker):
             env.pop("GEMINI_API_KEY", None)  # a stray key would bypass the Pro sign-in
         return env
 
-    def signed_in(self, account: dict) -> bool:
+    @property
+    def backend(self) -> str:
+        return "cli" if self.cfg.get("backend") == "cli" else "api"
+
+    def key_file(self, account: dict) -> Path:
+        return self.pool.home(account) / "api_key"
+
+    def api_key(self, account: dict) -> str:
         if account.get("api_key_env"):
-            return bool(os.environ.get(account["api_key_env"]))
+            return os.environ.get(account["api_key_env"], "").strip()
+        f = self.key_file(account)
+        return f.read_text(encoding="utf-8").strip() if f.exists() else ""
+
+    def set_key(self, name: str, key: str) -> Path:
+        acc = self._account(name)
+        f = self.key_file(acc)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(key.strip(), encoding="utf-8")
+        try:
+            os.chmod(f, 0o600)
+        except OSError:
+            pass
+        return f
+
+    def _account(self, name: str) -> dict:
+        acc = next((a for a in self.cfg["accounts"] if a.get("name") == name), None)
+        if not acc:
+            raise SystemExit(f"No Gemini account named {name!r}. Add it to squad.json -> workers.gemini.accounts")
+        return acc
+
+    def signed_in(self, account: dict) -> bool:
+        if self.backend == "api" or account.get("api_key_env"):
+            return bool(self.api_key(account))
         g = self.pool.home(account) / ".gemini"
         return any((g / f).exists() for f in ("oauth_creds.json", "google_accounts.json"))
 
@@ -132,8 +164,17 @@ class GeminiCliWorker(Worker):
             used = used or name
         return tin, tout, used
 
-    def call_account(self, account: dict, prompt: str, model: str) -> Result:
-        res, secs = self._run(account, prompt, model)
+    def call_account(self, account: dict, prompt: str, model: str, system: str = "", json_mode: bool = False,
+                     temperature: float | None = None) -> Result:
+        if self.backend == "api":
+            key = self.api_key(account)
+            if not key:
+                raise AuthError(f"no API key saved for {account['name']}")
+            r = gemini_api.generate(key, prompt, model=model, system=system, json_mode=json_mode,
+                                    temperature=temperature, timeout=float(self.cfg["timeout"]))
+            r.account = account["name"]
+            return r
+        res, secs = self._run(account, self.with_system(prompt, system, json_mode), model)
         out = self._parse(res.stdout)
         err = out.get("error")
         msg = (json.dumps(err) if err else "") + " " + (res.stderr or "")
@@ -150,7 +191,6 @@ class GeminiCliWorker(Worker):
 
     def generate(self, prompt, *, system="", model=None, json_mode=False, temperature=None, task="") -> Result:
         model = model or self.cfg["model"]
-        full = self.with_system(prompt, system, json_mode)
         pool = self.pool
         accounts = pool.order()
         if not accounts:
@@ -158,7 +198,7 @@ class GeminiCliWorker(Worker):
         errors = []
         for acc in accounts:
             try:
-                r = self.call_account(acc, full, model)
+                r = self.call_account(acc, prompt, model, system, json_mode, temperature)
                 pool.mark_ok(acc["name"])
                 return r
             except QuotaError as e:
@@ -166,7 +206,8 @@ class GeminiCliWorker(Worker):
                 errors.append(f"{acc['name']}: quota ({str(e)[:120]})")
             except AuthError as e:
                 pool.mark_auth(acc["name"], str(e))
-                errors.append(f"{acc['name']}: not signed in. Run `squad gemini login {acc['name']}`")
+                hint = "set-key" if self.backend == "api" else "login"
+                errors.append(f"{acc['name']}: {str(e)[:120]}. Run `squad gemini {hint} {acc['name']}`")
             except subprocess.TimeoutExpired:
                 pool.mark_error(acc["name"], "timeout")
                 errors.append(f"{acc['name']}: timed out")
@@ -181,9 +222,9 @@ class GeminiCliWorker(Worker):
     # ------------------------------------------------------------ login + status
     def login(self, name: str) -> int:
         """Open the CLI interactively for one account so you can choose 'Sign in with Google'."""
-        acc = next((a for a in self.cfg["accounts"] if a.get("name") == name), None)
-        if not acc:
-            raise SystemExit(f"No Gemini account named {name!r}. Add it to squad.json -> workers.gemini.accounts")
+        if self.backend == "api":
+            return self.prompt_key(name)
+        acc = self._account(name)
         exe = self.exe()
         if not exe:
             raise SystemExit(f"'{self.cfg['command']}' not found. Install it: npm install -g @google/gemini-cli")
@@ -191,8 +232,44 @@ class GeminiCliWorker(Worker):
               "Choose 'Sign in with Google', use the Google AI Pro account for this slot, then type /quit.")
         return subprocess.call([exe], env=self.account_env(acc))
 
+    def prompt_key(self, name: str) -> int:
+        """Ask for an AI Studio API key in the terminal (hidden input), check it, and save it."""
+        import getpass
+        self._account(name)
+        print(f"Gemini API key for '{name}'. Create one at https://aistudio.google.com/apikey\n"
+              "Paste it here (input is hidden) and press Enter:")
+        key = getpass.getpass("key: ").strip()
+        if not key:
+            print("No key entered; nothing saved.")
+            return 1
+        try:
+            models = gemini_api.list_models(key)
+        except WorkerError as e:
+            print(f"That key did not work: {e}")
+            return 1
+        f = self.set_key(name, key)
+        want = self.cfg["model"]
+        print(f"Saved to {f}. The key can use {len(models)} models.")
+        if want not in models:
+            pro = [m for m in models if "pro" in m][:8]
+            print(f"Note: the configured model {want!r} is not in its list. Pro models it can use: {', '.join(pro)}")
+        input("Press Enter to close.")
+        return 0
+
+    def models(self, name: str | None = None) -> list[str]:
+        accs = [self._account(name)] if name else self.cfg["accounts"]
+        for a in accs:
+            key = self.api_key(a)
+            if key:
+                return gemini_api.list_models(key)
+        raise WorkerError("no Gemini API key saved yet: run `squad gemini set-key acc1`")
+
     def status(self) -> dict:
-        exe = self.exe()
-        return {"name": self.name, "up": bool(exe), "command": self.cfg["command"], "model": self.cfg["model"],
-                "rotation": self.cfg["rotation"], "accounts": self.pool.status(self.signed_in),
-                "help": None if exe else "npm install -g @google/gemini-cli"}
+        if self.backend == "api":
+            up, help_ = True, None
+        else:
+            up = bool(self.exe())
+            help_ = None if up else "npm install -g @google/gemini-cli"
+        return {"name": self.name, "up": up, "backend": self.backend, "command": self.cfg["command"],
+                "model": self.cfg["model"], "rotation": self.cfg["rotation"],
+                "accounts": self.pool.status(self.signed_in), "help": help_}

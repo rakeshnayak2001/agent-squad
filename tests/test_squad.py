@@ -15,7 +15,7 @@ def cfg(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", f"{FAKES}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("SQUAD_CONFIG", str(tmp_path / "none.json"))
     return {"state_dir": str(tmp_path / "state"), "fallback": [],
-            "workers": {"gemini": {"accounts_dir": str(tmp_path / "acc"),
+            "workers": {"gemini": {"backend": "cli", "accounts_dir": str(tmp_path / "acc"),
                                    "accounts": [{"name": "acc1"}, {"name": "acc2"}]},
                         "local": {"url": "http://127.0.0.1:9", "timeout": 2}}}
 

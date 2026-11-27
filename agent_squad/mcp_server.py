@@ -66,7 +66,7 @@ def build():
     @mcp.tool()
     def worker_generate(prompt: str, worker: str = "local", system: str = "", json_mode: bool = False) -> str:
         """Give ONE small, well-specified task to a worker and return its answer.
-        worker: "local" (free Ollama), "gemini" (Gemini on the Pro accounts), or "<worker>:<model>".
+        worker: "local" (free Ollama), "gemini" (Gemini API with your keys), or "<worker>:<model>".
         Good for: brainstorming lists, rewording, classifying, extracting fields, formatting.
         Not for: facts you must be sure of, final scripts, decisions. Review what it returns."""
         out = _ask(worker, prompt, system, json_mode)
